@@ -35,8 +35,20 @@ OBJS = \
 RUST_DIR = userrs
 RUST_TARGET = riscv64gc-unknown-none-elf
 RUST_LIB = $(RUST_DIR)/libuserrs.a
-RUST_SRC := $(wildcard $(RUST_DIR)/src/*.rs) $(RUST_DIR)/Cargo.toml
+RUST_SRC := $(shell find $(RUST_DIR)/src -name '*.rs') $(RUST_DIR)/Cargo.toml
 
+$(RUST_LIB): $(RUST_SRC)
+	@echo "Building Rust user library $(RUST_LIB) (target=$(RUST_TARGET))"
+	cd $(RUST_DIR) && cargo build --release --target $(RUST_TARGET)
+	@mkdir -p $(dir $(RUST_LIB))
+	cp -f $(RUST_DIR)/target/$(RUST_TARGET)/release/libuserrs.a $(RUST_LIB)
+
+$U/_helloworld: $U/helloworld.o $(ULIB) $(RUST_LIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/helloworld.o $(RUST_LIB) $(ULIB)
+	$(OBJDUMP) -S $@ > $U/helloworld.asm
+$U/_calcrs: $U/calcrs.o $(ULIB) $(RUST_LIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/calcrs.o $(RUST_LIB) $(ULIB)
+	$(OBJDUMP) -S $@ > $U/calcrs.asm
 
 # Try to infer the correct TOOLPREFIX if not set
 ifndef TOOLPREFIX
@@ -88,7 +100,7 @@ endif
 LDFLAGS = -z max-page-size=4096
 
 $K/kernel: $(OBJS) $K/kernel.ld
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
@@ -126,20 +138,6 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 # http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
 .PRECIOUS: %.o
 
-# Build rust static library for the rust user program.
-# This rule expects a working Rust toolchain inside the build environment
-# and that the target $(RUST_TARGET) is installed.
-
-$(RUST_LIB): $(RUST_SRC)
-	@echo "Building Rust user library $(RUST_LIB) (target=$(RUST_TARGET))"
-	cd $(RUST_DIR) && cargo build --release --target $(RUST_TARGET)
-	@mkdir -p $(dir $(RUST_LIB))
-	cp -f $(RUST_DIR)/target/$(RUST_TARGET)/release/libuserrs.a $(RUST_LIB)
-
-$U/_helloworld: $U/helloworld.o $(ULIB) $(RUST_LIB) $U/user.ld
-	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/helloworld.o $(ULIB) $(RUST_LIB)
-	$(OBJDUMP) -S $@ > $U/helloworld.asm
-
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
@@ -161,6 +159,8 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_helloworld\
+	$U/_calc\
+	$U/_calcrs
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
